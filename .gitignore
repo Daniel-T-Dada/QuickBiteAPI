@@ -9,6 +9,8 @@ build
 # Logs
 npm-debug.log*
 
+.env
+
 old but works index copy.js
 old.js
 
