@@ -10,3 +10,7 @@ build
 npm-debug.log*
 
 old but works index copy.js
+old.js
+
+
+/generated/prisma

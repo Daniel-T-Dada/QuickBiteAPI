@@ -1,36 +1,12 @@
+
+// api/index.js
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs'); // 1. Import file system
-const path = require('path'); // 2. Import path utility
-
+const prisma = require('../lib/prisma'); // ✅ Import Prisma
 const app = express();
 
-app.use(cors()); // Allow Frontend to talk to Backend
-app.use(express.json()); // 3. IMPORTANT: Allows backend to parse JSON from forms
-
-// 4. Point to your new JSON database
-// Make sure you have a 'menu.json' file inside your 'data' folder!
-const DB_FILE = path.join(__dirname, '..', 'data', 'menu.json');
-
-// --- HELPER FUNCTIONS (To avoid repeating code) ---
-
-const readMenuData = () => {
-    try {
-        const data = fs.readFileSync(DB_FILE, 'utf8');
-        return JSON.parse(data);
-    } catch (error) {
-        console.error("Error reading file:", error);
-        return []; // Return empty array if file fails
-    }
-};
-
-const writeMenuData = (data) => {
-    try {
-        fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
-    } catch (error) {
-        console.error("Error writing file:", error);
-    }
-};
+app.use(cors());
+app.use(express.json());
 
 app.get('/', (req, res) => {
     const html = `
@@ -106,85 +82,117 @@ app.get('/', (req, res) => {
 
 // --- ROUTES ---
 
-// 1. GET ALL (Modified to read from file)
-app.get('/api/menu', (req, res) => {
-    const menuData = readMenuData();
-    res.json(menuData);
+// 1. GET ALL (Read from DB)
+app.get('/api/menu', async (req, res) => {
+  try {
+    // ✅ Prisma: Find Many
+    const menu = await prisma.menuItem.findMany({
+      orderBy: { id: 'asc' } // Keep order consistent
+    });
+    res.json(menu);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch menu" });
+  }
 });
 
 // 2. GET SINGLE ITEM
-app.get('/api/menu/:id', (req, res) => {
-    const menuData = readMenuData();
-    const id = Number(req.params.id);
-    const item = menuData.find((dish) => dish.id === id);
-
-    if (!item) {
-        return res.status(404).json({ error: "Item not found" });
-    }
-    res.json(item);
-});
-
-// 3. GET SPECIALS
-app.get('/api/specials', (req, res) => {
-    const menuData = readMenuData();
-    // Simple shuffle
-    const shuffled = [...menuData].sort(() => 0.5 - Math.random());
-    res.json(shuffled.slice(0, 4));
-});
-
-// 4. CREATE (Add New Item) - FOR ADMIN
-app.post('/api/menu', (req, res) => {
-    const menuData = readMenuData();
-    const newItem = req.body;
-
-    // Assign a simple unique ID using timestamp
-    newItem.id = Date.now();
-
-    menuData.push(newItem);
-    writeMenuData(menuData);
-
-    res.status(201).json({ message: "Item added successfully", item: newItem });
-});
-
-// 5. UPDATE (Edit Item) - FOR ADMIN
-app.put('/api/menu/:id', (req, res) => {
-    const menuData = readMenuData();
-    const id = Number(req.params.id);
-    const updates = req.body;
-
-    const index = menuData.findIndex(item => item.id === id);
-
-    if (index !== -1) {
-        menuData[index] = { ...menuData[index], ...updates };
-        writeMenuData(menuData);
-        res.json({ message: "Item updated", item: menuData[index] });
-    } else {
-        res.status(404).json({ error: "Item not found" });
-    }
-});
-
-// 6. DELETE (Remove Item) - FOR ADMIN
-app.delete('/api/menu/:id', (req, res) => {
-    const menuData = readMenuData();
-    const id = Number(req.params.id);
-
-    const newMenuData = menuData.filter(item => item.id !== id);
-
-    if (menuData.length !== newMenuData.length) {
-        writeMenuData(newMenuData);
-        res.json({ message: "Item deleted successfully" });
-    } else {
-        res.status(404).json({ error: "Item not found" });
-    }
-});
-
-// ✅ LOCAL SERVER SETUP
-if (process.env.NODE_ENV !== 'production') {
-    const PORT = 3001;
-    app.listen(PORT, () => {
-        console.log(`Server running locally at http://localhost:${PORT}`);
+app.get('/api/menu/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    // ✅ Prisma: Find Unique
+    const item = await prisma.menuItem.findUnique({
+      where: { id: id }
     });
+    if (item) res.json(item);
+    else res.status(404).json({ error: "Item not found" });
+  } catch (error) {
+    res.status(500).json({ error: "Error fetching item" });
+  }
+});
+
+// 3. ✅ GET SPECIALS (Random 4)
+app.get('/api/specials', async (req, res) => {
+  try {
+    // 1. Fetch all IDs (lightweight) or all items
+    // Since we only have ~40 items, fetching all is fine and fast.
+    const allItems = await prisma.menuItem.findMany();
+
+    // 2. Shuffle using JavaScript (same logic as before)
+    const shuffled = allItems.sort(() => 0.5 - Math.random());
+
+    // 3. Return top 4
+    res.json(shuffled.slice(0, 4));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch specials" });
+  }
+});
+
+// 4. CREATE (Admin)
+app.post('/api/menu', async (req, res) => {
+  try {
+    const { title, price, category, img, desc } = req.body;
+    
+    // ✅ Prisma: Create
+    const newItem = await prisma.menuItem.create({
+      data: {
+        title,
+        price: Number(price),
+        category,
+        img,
+        desc
+      }
+    });
+    res.status(201).json(newItem);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to create item" });
+  }
+});
+
+// 5. UPDATE (Admin)
+app.put('/api/menu/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    const { title, price, category, img, desc } = req.body;
+
+    // ✅ Prisma: Update
+    const updatedItem = await prisma.menuItem.update({
+      where: { id: id },
+      data: {
+        title,
+        price: Number(price),
+        category,
+        img,
+        desc
+      }
+    });
+    res.json(updatedItem);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to update item" });
+  }
+});
+
+// 6. DELETE (Admin)
+app.delete('/api/menu/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    // ✅ Prisma: Delete
+    await prisma.menuItem.delete({
+      where: { id: id }
+    });
+    res.json({ message: "Item deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to delete item" });
+  }
+});
+
+// Local Server Setup
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = 3001;
+  app.listen(PORT, () => {
+    console.log(`Server running locally at http://localhost:${PORT}`);
+  });
 }
 
-// ✅ EXPORT FOR VERCEL
 module.exports = app;
